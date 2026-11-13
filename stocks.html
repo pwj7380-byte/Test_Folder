@@ -79,6 +79,17 @@
   .g-lbl{fill:var(--muted);font-size:11px}
   .g-strong{fill:var(--up);font-weight:700}
   .g-fastc{fill:var(--accent)}
+  #bt{margin-top:28px}
+  .bt-h{font-size:18px;margin:0 0 2px}
+  .callout{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--up);
+           border-radius:10px;padding:12px 14px;margin:12px 0}
+  .callout p{margin:4px 0}
+  table.bt{min-width:760px}
+  table.bt th{position:static;cursor:default}
+  tr.grp td{background:var(--chip);color:var(--muted);font-size:12px;font-weight:600;text-align:left}
+  tr.base td{font-weight:700}
+  .d{font-size:11.5px;margin-left:3px}
+  .pos{color:var(--up)} .neg{color:var(--down)}
   table.cmp{min-width:0;margin-top:16px}
   table.cmp th{position:static;cursor:default}
 </style>
@@ -124,6 +135,24 @@
       <tbody id="rows"></tbody>
     </table>
   </div></div>
+
+  <section id="bt" hidden>
+    <h2 class="bt-h">과거 성과 (백테스트)</h2>
+    <p class="sub" id="btMeta"></p>
+    <div class="callout" id="btTake"></div>
+    <div class="card"><div class="scroll">
+      <table class="bt">
+        <thead><tr>
+          <th class="l">구분</th><th>건수</th>
+          <th>1일 승률</th><th>5일 승률</th><th>5일 평균</th><th>10일 승률</th><th>10일 평균</th><th>10일 중앙값</th>
+        </tr></thead>
+        <tbody id="btRows"></tbody>
+      </table>
+    </div></div>
+    <p class="note">승률 = 수익률이 0보다 큰 비율. 괄호 안은 기준선(전체 종목) 대비 차이입니다.
+      매수는 신호 다음 날 시가, 매도는 N거래일 뒤 종가로 계산했습니다. 수수료·세금은 빠져 있고, 현재 상장된 종목만 포함했습니다(상장폐지 종목 제외).
+      과거 한 기간의 결과이며, 시장 상황이 바뀌면 달라질 수 있습니다.</p>
+  </section>
 
   <details>
     <summary>지표 설명</summary>
@@ -274,6 +303,47 @@ document.querySelector("thead").addEventListener("click", e => {
   sortKey = k; render();
 });
 $("date").addEventListener("change", e => load(e.target.value).catch(err => $("meta").textContent = "불러오기 실패: " + err));
+
+function renderBacktest(b){
+  const base = b.baseline;
+  const pct = (v, sign) => v == null ? "-" : (sign && v > 0 ? "+" : "") + v.toFixed(sign ? 2 : 1) + "%";
+  const diff = (v, ref, unit) => {
+    if (v == null || ref == null) return "";
+    const d = v - ref, cls = d > 0.05 ? "pos" : d < -0.05 ? "neg" : "";
+    return `<span class="d ${cls}">(${d > 0 ? "+" : ""}${d.toFixed(1)}${unit})</span>`;
+  };
+  const row = (g, isBase) => {
+    const s1 = g.d1, s5 = g.d5, s10 = g.d10;
+    if (!s5) return "";
+    const cmp = !isBase;
+    return `<tr class="${isBase ? "base" : ""}"><td class="l">${esc(g.name)}</td><td>${fmt(s5.n)}</td>
+      <td>${pct(s1.win)}${cmp ? diff(s1.win, base.d1.win, "%p") : ""}</td>
+      <td>${pct(s5.win)}${cmp ? diff(s5.win, base.d5.win, "%p") : ""}</td>
+      <td>${pct(s5.avg, 1)}${cmp ? diff(s5.avg, base.d5.avg, "%p") : ""}</td>
+      <td>${pct(s10.win)}${cmp ? diff(s10.win, base.d10.win, "%p") : ""}</td>
+      <td>${pct(s10.avg, 1)}${cmp ? diff(s10.avg, base.d10.avg, "%p") : ""}</td>
+      <td>${pct(s10.median, 1)}</td></tr>`;
+  };
+  const grp = t => `<tr class="grp"><td colspan="8">${t}</td></tr>`;
+  $("btRows").innerHTML = row(base, true)
+    + grp("선정 규칙") + b.rules.map(g => row(g)).join("")
+    + grp("점수별") + b.byScore.map(g => row(g)).join("")
+    + grp("신호별 (해당 신호가 켜진 경우)") + b.bySignal.map(g => row(g)).join("");
+  $("btMeta").textContent = `${ymd(b.period[0])} ~ ${ymd(b.period[1])} · ${fmt(b.stocks)}개 종목 · 계산 ${b.generated}`;
+
+  const sel = b.rules[0], core = b.rules[1], top = b.byScore[b.byScore.length - 1];
+  const best = [...b.bySignal].sort((x, y) => y.d10.win - x.d10.win)[0];
+  const beat = sel.d10.win > base.d10.win;
+  $("btTake").innerHTML = `
+    <p><b>요약:</b> 이 기간에는 스크리너 선정 종목의 10일 승률이 <b>${pct(sel.d10.win)}</b>로,
+       아무 종목이나 산 경우(${pct(base.d10.win)})보다 <b>${beat ? "높았습니다" : "낮았습니다"}</b>.</p>
+    <p>핵심조건(RSI&lt;30 + MACD GC)은 10일 승률 ${pct(core.d10.win)}, 5점 이상은 ${pct(top.d10.win)}입니다.
+       ${top.d10.win < base.d10.win ? "점수가 높을수록 반등한 것이 아니라, 오히려 더 하락한 경우가 많았습니다." : ""}</p>
+    <p>신호 중 10일 승률이 가장 높았던 것은 <b>${esc(best.name)}</b>(${pct(best.d10.win)})입니다.</p>`;
+  $("bt").hidden = false;
+}
+fetch("stock/backtest.json", {cache:"no-store"}).then(r => r.ok ? r.json() : null)
+  .then(b => b && renderBacktest(b)).catch(() => {});
 
 fetch("stock/index.json", {cache:"no-store"}).then(r => r.json()).then(dates => {
   $("date").innerHTML = dates.map(d => `<option value="${d}">${ymd(d)}</option>`).join("");

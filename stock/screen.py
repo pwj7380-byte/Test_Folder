@@ -62,8 +62,11 @@ def daily_bars(code, count=200):
     bars = []
     for part in (txt or "").split('<item data="')[1:]:
         d, o, h, l, c, v = part.split('"')[0].split("|")
-        if float(c) > 0:
-            bars.append((d, float(o), float(h), float(l), float(c), float(v)))
+        o, h, l, c, v = map(float, (o, h, l, c, v))
+        if c > 0:
+            if min(o, h, l) <= 0:  # 거래정지일 등 시가·고가·저가 0 → 종가로 채움
+                o = h = l = c
+            bars.append((d, o, h, l, c, v))
     return bars
 
 
@@ -106,18 +109,9 @@ def crossed_up(a, b, i):
     return a[i - 1] <= b[i - 1] and a[i] > b[i]
 
 
-def analyze(stock):
-    bars = daily_bars(stock["code"])
-    if len(bars) < 60:
-        return None
-    dates = [b[0] for b in bars]
+def indicators(bars):
+    """일봉 → 지표 배열 묶음 (index i 의 값은 i 시점까지의 데이터만 사용)."""
     o, h, l, c, v = ([b[j] for b in bars] for j in range(1, 6))
-    last = len(c) - 1
-
-    avg_value = sum(c[i] * v[i] for i in range(last - 19, last + 1)) / 20
-    if avg_value < MIN_TRADING_VALUE:
-        return None
-
     r = rsi(c)
     macd = [a - b for a, b in zip(ema(c, 12), ema(c, 26))]
     sig = ema(macd, 9)
@@ -126,49 +120,67 @@ def analyze(stock):
     std20 = [None if ma20[i] is None else (sum((x - ma20[i]) ** 2 for x in c[i - 19:i + 1]) / 20) ** 0.5
              for i in range(len(c))]
     lower = [None if ma20[i] is None else ma20[i] - 2 * std20[i] for i in range(len(c))]
-    vol20 = sma(v, 20)
+    tv = [c[i] * v[i] for i in range(len(c))]
+    return {"dates": [b[0] for b in bars], "o": o, "h": h, "l": l, "c": c, "v": v, "rsi": r,
+            "macd": macd, "sig": sig, "sk": sk, "sd": sd, "ma20": ma20, "lower": lower,
+            "vol20": sma(v, 20), "tv20": sma(tv, 20)}
 
-    macd_cross = [i for i in range(last - 4, last + 1) if crossed_up(macd, sig, i)]
-    body = abs(c[last] - o[last])
-    lower_shadow = min(o[last], c[last]) - l[last]
-    upper_shadow = h[last] - max(o[last], c[last])
-    early, recent = range(last - 19, last - 4), range(last - 4, last + 1)
 
+def signals_at(x, i):
+    """i 일 장마감 기준 신호 판정. 유동성 미달이면 None."""
+    if i < 60 or x["tv20"][i] < MIN_TRADING_VALUE:
+        return None
+    o, h, l, c, v, r = x["o"], x["h"], x["l"], x["c"], x["v"], x["rsi"]
+    macd, sig, sk, sd, ma20, lower, vol20 = (x[k] for k in ("macd", "sig", "sk", "sd", "ma20", "lower", "vol20"))
+    macd_cross = [j for j in range(i - 4, i + 1) if crossed_up(macd, sig, j)]
+    body = abs(c[i] - o[i])
+    lower_shadow = min(o[i], c[i]) - l[i]
+    upper_shadow = h[i] - max(o[i], c[i])
+    early, recent = range(i - 19, i - 4), range(i - 4, i + 1)
     hit = {
-        "rsi": min(r[i] for i in recent) < 30,
+        "rsi": min(r[j] for j in recent) < 30,
         "macd": bool(macd_cross),
-        "stoch": any(crossed_up(sk, sd, i) and sk[i - 1] < 20 for i in range(last - 2, last + 1)),
-        "bb": any(l[i] <= lower[i] for i in range(last - 2, last + 1))
-              and c[last] > lower[last] and c[last] > c[last - 1],
-        "div": min(l[i] for i in recent) < min(l[i] for i in early)
-               and min(r[i] for i in recent) > min(r[i] for i in early)
-               and min(r[i] for i in early) < 35,
-        "disp": c[last] / ma20[last] <= 0.90,
-        "volup": v[last] >= 2 * vol20[last - 1] and c[last] > o[last],
-        "hammer": c[last] < ma20[last] and body > 0
-                  and lower_shadow >= 2 * body and upper_shadow <= body,
+        "stoch": any(crossed_up(sk, sd, j) and sk[j - 1] < 20 for j in range(i - 2, i + 1)),
+        "bb": any(l[j] <= lower[j] for j in range(i - 2, i + 1)) and c[i] > lower[i] and c[i] > c[i - 1],
+        "div": min(l[j] for j in recent) < min(l[j] for j in early)
+               and min(r[j] for j in recent) > min(r[j] for j in early)
+               and min(r[j] for j in early) < 35,
+        "disp": c[i] / ma20[i] <= 0.90,
+        "volup": v[i] >= 2 * vol20[i - 1] and c[i] > o[i],
+        "hammer": c[i] < ma20[i] and body > 0 and lower_shadow >= 2 * body and upper_shadow <= body,
     }
     signals = [k for k, ok in hit.items() if ok]
-    core = hit["rsi"] and hit["macd"]  # 원래 요청 조건
-    if not core and len(signals) < 3:
-        return None
+    core = hit["rsi"] and hit["macd"]
+    return {"signals": signals, "score": len(signals), "core": core,
+            "strict": core and macd_cross[-1] == i and r[i] < 30, "crossIdx": macd_cross[-1] if macd_cross else None}
 
+
+def analyze(stock):
+    bars = daily_bars(stock["code"])
+    if len(bars) < 61:
+        return None
+    x = indicators(bars)
+    last = len(bars) - 1
+    s = signals_at(x, last)
+    if not s or (not s["core"] and s["score"] < 3):
+        return None
+    c, r, v = x["c"], x["rsi"], x["v"]
     return {
         **stock,
-        "date": dates[last],
+        "date": x["dates"][last],
         "close": c[last],
         "change": round((c[last] / c[last - 1] - 1) * 100, 2),
         "rsi": round(r[last], 1),
-        "rsiMin5d": round(min(r[i] for i in recent), 1),
-        "stochK": round(sk[last], 1),
-        "disparity": round(c[last] / ma20[last] * 100, 1),
-        "volRatio": round(v[last] / vol20[last - 1], 2) if vol20[last - 1] else None,
+        "rsiMin5d": round(min(r[last - 4:]), 1),
+        "stochK": round(x["sk"][last], 1),
+        "disparity": round(c[last] / x["ma20"][last] * 100, 1),
+        "volRatio": round(v[last] / x["vol20"][last - 1], 2) if x["vol20"][last - 1] else None,
         "tradingValue": round(c[last] * v[last] / 1e8, 1),  # 억원
-        "crossDate": dates[macd_cross[-1]] if macd_cross else None,
-        "core": core,
-        "strict": core and bool(macd_cross) and macd_cross[-1] == last and r[last] < 30,
-        "signals": signals,
-        "score": len(signals),
+        "crossDate": x["dates"][s["crossIdx"]] if s["crossIdx"] is not None else None,
+        "core": s["core"],
+        "strict": s["strict"],
+        "signals": s["signals"],
+        "score": s["score"],
     }
 
 
