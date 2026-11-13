@@ -154,6 +154,24 @@
       과거 한 기간의 결과이며, 시장 상황이 바뀌면 달라질 수 있습니다.</p>
   </section>
 
+  <section id="st" hidden>
+    <h2 class="bt-h">전략 비교 (약 2년 백테스트)</h2>
+    <p class="sub" id="stMeta"></p>
+    <div class="callout" id="stTake"></div>
+    <div class="card"><div class="scroll">
+      <table class="bt">
+        <thead><tr>
+          <th class="l">전략</th><th>건수</th>
+          <th>10일 승률</th><th>10일 평균<br><small>비용 후</small></th><th>20일 평균</th>
+          <th>20일 평균<br><small>앞 → 뒤 기간</small></th>
+          <th>연수익률<br><small>20일 보유</small></th><th>최대 낙폭</th><th>샤프</th>
+        </tr></thead>
+        <tbody id="stRows"></tbody>
+      </table>
+    </div></div>
+    <p class="note" id="stNote"></p>
+  </section>
+
   <details>
     <summary>지표 설명</summary>
     <dl id="legend"></dl>
@@ -342,6 +360,45 @@ function renderBacktest(b){
     <p>신호 중 10일 승률이 가장 높았던 것은 <b>${esc(best.name)}</b>(${pct(best.d10.win)})입니다.</p>`;
   $("bt").hidden = false;
 }
+function renderStrategies(d){
+  const S = d.strategies.filter(s => s.trades.full.d10);
+  const sg = (v, dp=2) => v == null ? "-" : `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${v > 0 ? "+" : ""}${v.toFixed(dp)}%</span>`;
+  const best = (f, dir=1) => S.reduce((a, b) => (f(b) ?? -1e9) * dir > (f(a) ?? -1e9) * dir ? b : a);
+  const bWin = best(s => s.trades.full.d10.win), bNet = best(s => s.trades.full.d10.net),
+        bCagr = best(s => s.port.h20.full.cagr), bMdd = best(s => s.port.h20.full.mdd);
+  const mark = (s, b) => s === b ? " ◀" : "";
+  $("stRows").innerHTML = S.map(s => {
+    const t = s.trades.full, p = s.port.h20.full, a = s.trades.A.d20, b = s.trades.B.d20;
+    return `<tr class="${s.key === "base" ? "base" : ""}">
+      <td class="l" title="${esc(s.desc)}">${esc(s.name)}<div class="sub" style="font-size:11.5px;font-weight:400">${esc(s.desc)}</div></td>
+      <td>${fmt(t.d10.n)}</td>
+      <td>${t.d10.win.toFixed(1)}%${mark(s, bWin)}</td>
+      <td>${sg(t.d10.net)}${mark(s, bNet)}</td>
+      <td>${sg(t.d20.avg)}</td>
+      <td>${sg(a && a.avg)} → ${sg(b && b.avg)}</td>
+      <td>${sg(p.cagr, 1)}${mark(s, bCagr)}</td>
+      <td>${p.mdd.toFixed(1)}%${mark(s, bMdd)}</td>
+      <td>${p.sharpe == null ? "-" : p.sharpe.toFixed(2)}</td></tr>`;
+  }).join("") + (d.benchmarks || []).map(b => `
+    <tr class="grp"><td class="l">${esc(b.name)}</td><td colspan="5" style="text-align:left">지수 ETF를 기간 내내 그냥 보유 (기간 수익률 ${sg(b.full.total, 1)})</td>
+      <td>${sg(b.full.cagr, 1)}</td><td>${b.full.mdd.toFixed(1)}%</td><td>-</td></tr>`).join("");
+  const P = d.periods;
+  $("stMeta").textContent = `전체 ${ymd(P.full[0])} ~ ${ymd(P.full[1])} · 앞 기간 ~${ymd(P.A[1])} / 뒤 기간 ${ymd(P.B[0])}~ · ${fmt(d.stocks)}개 종목 · 계산 ${d.generated}`;
+  const k200 = (d.benchmarks || [])[0];
+  $("stTake").innerHTML = `
+    <p><b>승률이 가장 높은 전략</b>은 ${esc(bWin.name)}(10일 승률 ${bWin.trades.full.d10.win.toFixed(1)}%)이었습니다.
+       ${bWin.trades.full.d10.win < 50 ? "<b>승률 50%를 넘은 전략은 하나도 없었습니다.</b>" : ""}</p>
+    <p><b>비용 후 기대값</b>이 가장 좋은 것은 ${esc(bNet.name)}(10일 평균 ${sg(bNet.trades.full.d10.net)}),
+       최대 낙폭이 가장 작은 것은 ${esc(bMdd.name)}(${bMdd.port.h20.full.mdd.toFixed(1)}%)입니다.</p>
+    ${k200 ? `<p>같은 기간 <b>${esc(k200.name)}</b>는 연 ${sg(k200.full.cagr, 1)}로, ${k200.full.cagr > bCagr.port.h20.full.cagr ? "위의 모든 종목 선택 전략보다 앞섰습니다" : `가장 좋은 전략(${esc(bCagr.name)})보다 낮았습니다`}.</p>` : ""}`;
+  $("stNote").innerHTML = `◀ = 해당 열에서 가장 좋은 값. 매수는 신호 다음 날 시가, 매도는 N거래일 뒤 종가로 계산했고, 비용은 왕복 ${d.cost}%입니다.
+    연수익률·최대 낙폭은 매일 새로 나온 신호 종목을 20일씩 보유하며 균등 분산했다고 가정했습니다.
+    모멘텀·저변동성은 매일 상위 ${d.topN}종목을 고릅니다. 현재 상장 종목만 포함했고(상장폐지 제외), 과거 결과가 미래를 보장하지 않습니다.`;
+  $("st").hidden = false;
+}
+fetch("stock/strategies.json", {cache:"no-store"}).then(r => r.ok ? r.json() : null)
+  .then(d => d && renderStrategies(d)).catch(() => {});
+
 fetch("stock/backtest.json", {cache:"no-store"}).then(r => r.ok ? r.json() : null)
   .then(b => b && renderBacktest(b)).catch(() => {});
 
