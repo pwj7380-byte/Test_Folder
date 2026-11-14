@@ -185,21 +185,47 @@ def rebound_v2(x, i, look=10, fresh=3, confirm=0.03):
         if turn(t) and any(oversold(j) for j in range(t - look, t)):
             low = min(l[i - look:i + 1])
             if c[i] >= low * (1 + confirm) and c[i] > c[i - 1]:
-                return {"turnIdx": t, "volSurge": any(v[j] >= 1.5 * vol20[j - 1] and c[j] > o[j]
-                                                      for j in range(t, i + 1))}
+                kinds = [k for k, ok in (("MACD GC", crossed_up(macd, sig, t)),
+                                         ("스토캐스틱 GC", crossed_up(sk, sd, t) and sk[t - 1] < 25),
+                                         ("볼린저 복귀", l[t - 1] <= lower[t - 1] and c[t] > lower[t] and c[t] > c[t - 1]))
+                         if ok]
+                return {"turnIdx": t, "turnKinds": kinds, "low": low,
+                        "oversoldIdx": max(j for j in range(t - look, t) if oversold(j)),
+                        "volSurge": any(v[j] >= 1.5 * vol20[j - 1] and c[j] > o[j] for j in range(t, i + 1))}
             return None
     return None
 
 
+def watch_item(stock, x, i, rb):
+    """순서형 반등 v2 관심 종목 한 건."""
+    c, d = x["c"], x["dates"]
+    ma200 = sum(c[i - 199:i + 1]) / 200 if i >= 199 else None
+    return {
+        "code": stock["code"], "name": stock["name"], "market": stock["market"],
+        "marketValue": stock["marketValue"], "date": d[i], "close": c[i],
+        "change": round((c[i] / c[i - 1] - 1) * 100, 2),
+        "rsi": round(x["rsi"][i], 1), "rsiMin": round(min(x["rsi"][i - 10:i + 1]), 1),
+        "bounce": round((c[i] / rb["low"] - 1) * 100, 1),
+        "disparity": round(c[i] / x["ma20"][i] * 100, 1),
+        "oversoldDate": d[rb["oversoldIdx"]], "turnDate": d[rb["turnIdx"]], "turnKinds": rb["turnKinds"],
+        "volSurge": rb["volSurge"], "aboveMa200": ma200 is not None and c[i] > ma200,
+    }
+
+
 def analyze(stock):
-    bars = daily_bars(stock["code"])
+    """→ (스크리너 후보 or None, v2 관심 종목 or None)"""
+    bars = daily_bars(stock["code"], 260)
     if len(bars) < 61:
-        return None
+        return None, None
     x = indicators(bars, stock.get("shares"))
     last = len(bars) - 1
     s = signals_at(x, last)
-    if not s or (not s["core"] and s["score"] < 3):
-        return None
+    if not s:
+        return None, None
+    rb = rebound_v2(x, last)
+    watch = watch_item(stock, x, last, rb) if rb else None
+    if not s["core"] and s["score"] < 3:
+        return None, watch
     c, r, v = x["c"], x["rsi"], x["v"]
     return {
         **stock,
@@ -217,7 +243,7 @@ def analyze(stock):
         "strict": s["strict"],
         "signals": s["signals"],
         "score": s["score"],
-    }
+    }, watch
 
 
 def main():
@@ -225,7 +251,9 @@ def main():
     stocks = list_stocks("KOSPI") + list_stocks("KOSDAQ")
     print(f"대상 종목: {len(stocks)}개")
     with ThreadPoolExecutor(max_workers=8) as ex:
-        hits = [h for h in ex.map(analyze, stocks) if h]
+        results = list(ex.map(analyze, stocks))
+    hits = [h for h, _ in results if h]
+    watch = [w for _, w in results if w]
 
     # 기준일 = 삼성전자 마지막 거래일
     ref = daily_bars("005930", 1)
@@ -236,10 +264,17 @@ def main():
         return 2
     hits = [h for h in hits if h["date"] == trade_date]
     hits.sort(key=lambda h: (not h["strict"], not h["core"], -h["score"], h["rsiMin5d"]))
+    # v2 관심 종목 우선순위: 거래량 동반(+2, 백테스트상 v2 변형 중 가장 나음), 전환 신호 2개 이상(+1),
+    # 오늘 전환(+1), 최근 RSI<30(+1), 저점 대비 +8% 이하로 덜 오름(+1)
+    watch = [w for w in watch if w["date"] == trade_date]
+    for w in watch:
+        w["prio"] = (2 * w["volSurge"] + (len(w["turnKinds"]) >= 2) + (w["turnDate"] == trade_date)
+                     + (w["rsiMin"] < 30) + (w["bounce"] <= 8))
+    watch.sort(key=lambda w: (-w["prio"], w["bounce"]))
 
     result = {"date": trade_date, "generated": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
               "scanned": len(stocks), "minTradingValue": MIN_TRADING_VALUE, "minMarketCap": MIN_MARKET_CAP,
-              "signalInfo": SIGNALS, "stocks": hits}
+              "signalInfo": SIGNALS, "stocks": hits, "watch": watch}
     data_dir = BASE / "data"
     data_dir.mkdir(exist_ok=True)
     payload = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
@@ -248,6 +283,7 @@ def main():
     dates = sorted((p.stem for p in data_dir.glob("*.json")), reverse=True)
     (BASE / "index.json").write_text(json.dumps(dates))
 
+    print(f"v2 관심 종목 {len(watch)}개 (거래량 동반 {sum(w['volSurge'] for w in watch)})")
     print(f"{trade_date}: 후보 {len(hits)}개 (핵심조건 {sum(h['core'] for h in hits)}, "
           f"당일동시 {sum(h['strict'] for h in hits)})")
     for h in hits[:15]:
