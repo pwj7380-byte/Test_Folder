@@ -1,6 +1,7 @@
 """스크리너 백테스트: 점수별·신호별 과거 적중률과 수익률.
 
 가정
+- 대상: 20일 평균 거래대금 5억 원 이상, 시총 1천억 원 이상 (시총 = 현재 주식수 × 당시 종가 추정)
 - 매 거래일 장마감 후 스크리너 실행 → 다음 날 시가에 매수 → N 거래일 뒤 종가에 매도
 - 적중 = 수익률 > 0. 수수료·세금 제외. 현재 상장 종목만 대상(상장폐지 종목 빠짐 = 생존 편향)
 - 기준선(전체) = 같은 기간 유동성 조건을 통과한 모든 종목-일
@@ -27,7 +28,7 @@ def run_stock(stock):
     bars = daily_bars(stock["code"], BARS)
     if len(bars) < 61 + max(HOLDS) + 1:
         return None
-    x = indicators(bars)
+    x = indicators(bars, stock.get("shares"))
     o, c = x["o"], x["c"]
     base = {h: array("f") for h in HOLDS}
     events = []

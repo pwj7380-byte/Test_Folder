@@ -1,7 +1,8 @@
 """여러 알려진 전략을 같은 조건으로 비교하는 백테스트.
 
 공통 가정
-- 대상: 코스피·코스닥 현재 상장 보통주 중 20일 평균 거래대금 5억 원 이상 (생존 편향 있음)
+- 대상: 코스피·코스닥 현재 상장 보통주 중 20일 평균 거래대금 5억 원 이상, 시총 1천억 원 이상
+  (시총은 현재 주식수 × 당시 종가로 추정, 생존 편향 있음)
 - 매일 장마감 후 신호 → 다음 날 시가 매수 → H 거래일 뒤 종가 매도
 - 거래비용: 왕복 0.25% (수수료 + 매도 세금 근사)
 - 기간을 앞(A)/뒤(B) 절반으로 나눠, A에서 좋았던 전략이 B에서도 좋은지 확인
@@ -24,7 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from screen import BASE, KST, daily_bars, indicators, list_stocks, rsi, signals_at, sma
+from screen import BASE, KST, daily_bars, indicators, list_stocks, rebound_v2, rsi, signals_at, sma
 
 BARS = 750          # 약 3년
 WARM = 252          # 52주 고가·200일선 계산용 준비 기간
@@ -39,6 +40,9 @@ STRATS = [
     ("screen", "현재 스크리너", "핵심조건 또는 반등 신호 3개 이상"),
     ("core", "핵심조건 (RSI<30 + MACD GC)", "최근 5일 RSI(14)<30 + MACD 골든크로스"),
     ("screen_trend", "스크리너 + 추세 필터", "현재 스크리너 선정 종목 중 종가 > 120일 이동평균"),
+    ("rb2", "순서형 반등 v2", "과매도 → 이후 전환 신호(MACD·스토캐스틱 GC, 볼린저 복귀) → 저점 대비 +3% 확인"),
+    ("rb2_trend", "순서형 반등 v2 + 200일선 위", "v2 신호 중 종가 > 200일 이동평균 (상승 추세 속 눌림)"),
+    ("rb2_vol", "순서형 반등 v2 + 거래량", "v2 신호 중 전환 이후 거래량 1.5배 이상 양봉"),
     ("rsi2", "RSI(2) 눌림목", "종가 > 200일 이동평균(상승 추세)에서 RSI(2) < 10 (래리 코너스 방식)"),
     ("trend", "이동평균 정배열", "종가 > 20일 > 60일 > 120일 이동평균"),
     ("high52", "52주 신고가 근처", "종가가 52주 최고가의 95% 이상"),
@@ -66,7 +70,7 @@ def prepare(stock, cal_index, T):
     bars = daily_bars(stock["code"], BARS)
     if len(bars) < WARM + 30:
         return None
-    x = indicators(bars)
+    x = indicators(bars, stock.get("shares"))
     o, h, c = x["o"], x["h"], x["c"]
     n = len(c)
     ma60, ma120, ma200 = sma(c, 60), sma(c, 120), sma(c, 200)
@@ -98,6 +102,11 @@ def prepare(stock, cal_index, T):
         f |= BIT["screen"] if screen else 0
         f |= BIT["core"] if s["core"] else 0
         f |= BIT["screen_trend"] if screen and c[i] > ma120[i] else 0
+        rb = rebound_v2(x, i)
+        if rb:
+            f |= BIT["rb2"]
+            f |= BIT["rb2_trend"] if c[i] > ma200[i] else 0
+            f |= BIT["rb2_vol"] if rb["volSurge"] else 0
         f |= BIT["rsi2"] if c[i] > ma200[i] and r2[i] < 10 else 0
         f |= BIT["trend"] if c[i] > x["ma20"][i] > ma60[i] > ma120[i] else 0
         f |= BIT["high52"] if c[i] >= 0.95 * hi252[i] else 0

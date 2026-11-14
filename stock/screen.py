@@ -17,6 +17,7 @@ UA = {"User-Agent": "Mozilla/5.0"}
 BASE = Path(__file__).resolve().parent
 KST = timezone(timedelta(hours=9))
 MIN_TRADING_VALUE = 5e8  # 20일 평균 거래대금 5억원 미만은 제외
+MIN_MARKET_CAP = 1000e8  # 시가총액 1천억원 미만은 제외 (과거 시점은 현재 주식수 × 당시 종가로 추정)
 
 # 신호 정의 (웹페이지에서도 이 설명을 사용)
 SIGNALS = {
@@ -51,8 +52,11 @@ def list_stocks(market):
             return out
         for s in stocks:
             if s.get("stockEndType") == "stock" and s.get("tradeStopType", {}).get("name") == "TRADING":
+                cap = float(s.get("marketValue", "0").replace(",", "") or 0) * 1e8
+                close = float(s.get("closePriceRaw") or 0)
                 out.append({"code": s["itemCode"], "name": s["stockName"], "market": market,
-                            "marketValue": s.get("marketValueHangeul", "")})
+                            "marketValue": s.get("marketValueHangeul", ""),
+                            "shares": cap / close if close else 0})
         page += 1
 
 
@@ -109,8 +113,9 @@ def crossed_up(a, b, i):
     return a[i - 1] <= b[i - 1] and a[i] > b[i]
 
 
-def indicators(bars):
-    """일봉 → 지표 배열 묶음 (index i 의 값은 i 시점까지의 데이터만 사용)."""
+def indicators(bars, shares=None):
+    """일봉 → 지표 배열 묶음 (index i 의 값은 i 시점까지의 데이터만 사용).
+    shares(발행주식수)를 주면 cap(시가총액 추정) 배열도 만든다."""
     o, h, l, c, v = ([b[j] for b in bars] for j in range(1, 6))
     r = rsi(c)
     macd = [a - b for a, b in zip(ema(c, 12), ema(c, 26))]
@@ -123,12 +128,15 @@ def indicators(bars):
     tv = [c[i] * v[i] for i in range(len(c))]
     return {"dates": [b[0] for b in bars], "o": o, "h": h, "l": l, "c": c, "v": v, "rsi": r,
             "macd": macd, "sig": sig, "sk": sk, "sd": sd, "ma20": ma20, "lower": lower,
-            "vol20": sma(v, 20), "tv20": sma(tv, 20)}
+            "vol20": sma(v, 20), "tv20": sma(tv, 20),
+            "cap": [x * shares for x in c] if shares else None}
 
 
 def signals_at(x, i):
-    """i 일 장마감 기준 신호 판정. 유동성 미달이면 None."""
+    """i 일 장마감 기준 신호 판정. 유동성·시총 미달이면 None."""
     if i < 60 or x["tv20"][i] < MIN_TRADING_VALUE:
+        return None
+    if x["cap"] is not None and x["cap"][i] < MIN_MARKET_CAP:
         return None
     o, h, l, c, v, r = x["o"], x["h"], x["l"], x["c"], x["v"], x["rsi"]
     macd, sig, sk, sd, ma20, lower, vol20 = (x[k] for k in ("macd", "sig", "sk", "sd", "ma20", "lower", "vol20"))
@@ -155,11 +163,39 @@ def signals_at(x, i):
             "strict": core and macd_cross[-1] == i and r[i] < 30, "crossIdx": macd_cross[-1] if macd_cross else None}
 
 
+def rebound_v2(x, i, look=10, fresh=3, confirm=0.03):
+    """순서형 반등 판정: ① 과매도 → ② 그 뒤 전환 신호 → ③ 저점 대비 반등 확인.
+
+    ① 과매도일: RSI(14) < 30 또는 종가/20일선 <= 0.90
+    ② 전환일 t (최근 fresh 거래일 이내): MACD 골든크로스, 스토캐스틱 GC(%K 전일 < 25),
+       볼린저 하단 터치 후 밴드 안 상승 마감 중 하나. 단, t 이전 look일 안에 ①이 있어야 함
+    ③ 오늘 종가 >= 최근 look일 최저가 × (1 + confirm) 이고 오늘 종가 > 전일 종가
+    """
+    o, l, c, v, r = x["o"], x["l"], x["c"], x["v"], x["rsi"]
+    macd, sig, sk, sd, ma20, lower, vol20 = (x[k] for k in ("macd", "sig", "sk", "sd", "ma20", "lower", "vol20"))
+
+    def oversold(j):
+        return r[j] < 30 or c[j] / ma20[j] <= 0.90
+
+    def turn(t):
+        return (crossed_up(macd, sig, t) or (crossed_up(sk, sd, t) and sk[t - 1] < 25)
+                or (l[t - 1] <= lower[t - 1] and c[t] > lower[t] and c[t] > c[t - 1]))
+
+    for t in range(i, i - fresh, -1):
+        if turn(t) and any(oversold(j) for j in range(t - look, t)):
+            low = min(l[i - look:i + 1])
+            if c[i] >= low * (1 + confirm) and c[i] > c[i - 1]:
+                return {"turnIdx": t, "volSurge": any(v[j] >= 1.5 * vol20[j - 1] and c[j] > o[j]
+                                                      for j in range(t, i + 1))}
+            return None
+    return None
+
+
 def analyze(stock):
     bars = daily_bars(stock["code"])
     if len(bars) < 61:
         return None
-    x = indicators(bars)
+    x = indicators(bars, stock.get("shares"))
     last = len(bars) - 1
     s = signals_at(x, last)
     if not s or (not s["core"] and s["score"] < 3):
@@ -202,7 +238,7 @@ def main():
     hits.sort(key=lambda h: (not h["strict"], not h["core"], -h["score"], h["rsiMin5d"]))
 
     result = {"date": trade_date, "generated": datetime.now(KST).strftime("%Y-%m-%d %H:%M KST"),
-              "scanned": len(stocks), "minTradingValue": MIN_TRADING_VALUE,
+              "scanned": len(stocks), "minTradingValue": MIN_TRADING_VALUE, "minMarketCap": MIN_MARKET_CAP,
               "signalInfo": SIGNALS, "stocks": hits}
     data_dir = BASE / "data"
     data_dir.mkdir(exist_ok=True)
