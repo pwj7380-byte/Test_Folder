@@ -13,7 +13,7 @@
     --bg:#0b0b0d; --s1:#131316; --s2:#1a1a1f; --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
     --text:#ece8df; --muted:#8e8a82; --dim:#5d5a55;
     --gold:#cfae72; --gold2:#a8854b; --goldsoft:rgba(207,174,114,.12);
-    --up:#ff7468; --down:#6ea3ff; --ok:#cfae72; --bad:#b4544c;
+    --ok:#cfae72; --bad:#b4544c;
     --r:18px; --tab:74px;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -131,32 +131,6 @@
   .chip{min-width:40px;padding:8px 0;border-radius:11px;border:1px solid var(--line2);font-size:13.5px;font-weight:600;color:var(--muted);flex:1;text-align:center}
   .chip[aria-pressed=true]{background:var(--goldsoft);color:var(--gold);border-color:rgba(207,174,114,.45)}
 
-  /* stocks */
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px}
-  .stat{padding:12px;border-radius:14px;background:rgba(0,0,0,.22);border:1px solid var(--line)}
-  .stat b{display:block;font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-  .stat span{font-size:11.5px;color:var(--muted)}
-  .stocks{display:grid;gap:10px}
-  @media(min-width:640px){.stocks{grid-template-columns:1fr 1fr}}
-  .st{display:block;color:inherit;text-decoration:none;padding:16px;border-radius:16px;background:linear-gradient(180deg,var(--s2),var(--s1));border:1px solid var(--line);transition:.15s}
-  .st:active{transform:scale(.99)}
-  @media(hover:hover){.st:hover{border-color:rgba(207,174,114,.35)}}
-  .st .top1{display:flex;justify-content:space-between;gap:10px}
-  .st .nm{font-weight:650;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .st .sub{font-size:11.5px;color:var(--muted)}
-  .st .px{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .st .px b{display:block;font-size:15.5px;font-weight:650}
-  .up{color:var(--up)} .down{color:var(--down)}
-  .st .tags{display:flex;flex-wrap:wrap;gap:5px;margin:11px 0}
-  .tag{font-size:11px;padding:2px 8px;border-radius:7px;background:rgba(255,255,255,.05);color:var(--muted)}
-  .tag.g{background:var(--goldsoft);color:var(--gold)}
-  .st .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:11.5px;color:var(--muted)}
-  .st .kv b{display:block;color:var(--text);font-size:13.5px;font-weight:600;font-variant-numeric:tabular-nums}
-  .prio{display:flex;gap:3px;margin-top:6px;justify-content:flex-end}
-  .prio i{width:5px;height:5px;border-radius:50%;background:var(--dim)}
-  .prio i.on{background:var(--gold)}
-  .more{display:block;width:100%;margin-top:12px}
-  a.link{color:var(--gold);text-decoration:none;font-size:13.5px}
   .toast{position:fixed;left:50%;bottom:calc(var(--tab) + 30px + env(safe-area-inset-bottom));transform:translate(-50%,20px);opacity:0;
          background:#26231d;border:1px solid rgba(207,174,114,.35);color:var(--text);padding:11px 18px;border-radius:14px;font-size:14px;
          transition:.25s;z-index:30;pointer-events:none;max-width:90vw;text-align:center}
@@ -213,25 +187,11 @@
     </div>
   </section>
 
-  <!-- ================= 주식 ================= -->
-  <section id="tab-stock" hidden>
-    <div class="card hero" id="stockHead"><div class="empty">불러오는 중…</div></div>
-    <div class="label" style="padding:4px 4px 0"><span>유의 종목</span><span class="gold" id="stockCount"></span></div>
-    <div class="stocks" id="stocks"></div>
-    <button class="btn ghost more" id="moreBtn" hidden></button>
-    <p class="small muted" style="margin:18px 4px 0">
-      우선순위 점(최대 6): 거래량 동반 +2 · 전환 신호 2개 이상 +1 · 오늘 전환 +1 · 최근 RSI 30 미만 +1 · 저점 대비 +8% 이하 +1.
-      종목을 누르면 네이버 증권으로 이동해요. 투자 판단의 책임은 본인에게 있어요.
-    </p>
-    <p style="margin:12px 4px"><a class="link" href="stocks.html">전체 스크리너 · 백테스트 보기 →</a></p>
-  </section>
 </div>
 
 <nav role="tablist">
   <button role="tab" aria-selected="true" data-tab="fit">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 7v10M18 7v10M3 10v4M21 10v4M6 12h12"/></svg>운동</button>
-  <button role="tab" aria-selected="false" data-tab="stock">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>주식</button>
 </nav>
 <div class="toast" id="toast"></div>
 
@@ -252,9 +212,8 @@ function tick(){
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(t){
   document.querySelectorAll("nav button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === t));
-  $("tab-fit").hidden = t !== "fit"; $("tab-stock").hidden = t !== "stock";
+  $("tab-fit").hidden = t !== "fit";
   localStorage.setItem("dash.tab", t); scrollTo(0, 0);
-  if (t === "stock") loadStocks();
 }
 
 /* ---------- 날짜 ---------- */
@@ -521,63 +480,9 @@ $("import").onclick = () => {
   catch { toast("형식이 올바르지 않아요"); }
 };
 
-/* ---------- 주식 ---------- */
-let stockLoaded = false, showAll = false, WATCH = [];
-const ymd8 = s => `${s.slice(4,6)}/${s.slice(6)}`;
-const won = v => Math.round(v).toLocaleString("ko-KR");
-function loadStocks(){
-  if (stockLoaded) return; stockLoaded = true;
-  Promise.all([
-    fetch("stock/latest.json", {cache:"no-store"}).then(r => r.json()),
-    fetch("stock/strategies.json", {cache:"no-store"}).then(r => r.ok ? r.json() : null).catch(() => null),
-  ]).then(([d, st]) => renderStocks(d, st)).catch(() => { $("stockHead").innerHTML = '<div class="empty">데이터를 불러오지 못했어요</div>'; });
-}
-function renderStocks(d, st){
-  WATCH = d.watch || [];
-  const date = `${d.date.slice(0,4)}.${d.date.slice(4,6)}.${d.date.slice(6)}`;
-  const g = k => st?.strategies.find(s => s.key === k)?.trades.full.d10;
-  const v2 = g("rb2"), v2v = g("rb2_vol"), base = g("base");
-  const sg = v => v == null ? "-" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`;
-  $("stockHead").innerHTML = `
-    <div class="label"><span>Rebound watch · ${date} 종가</span><span class="gold">${WATCH.length}종목</span></div>
-    <h2>순서형 반등 v2</h2>
-    <div class="muted small" style="margin-top:6px">① RSI 30 미만 또는 20일선 −10% 과매도 → ② 그 뒤 MACD·스토캐스틱 골든크로스나 볼린저 하단 복귀 →
-      ③ 저점 대비 +3% 이상 반등 확인. 시총 1천억 원 이상, 20일 평균 거래대금 5억 원 이상만.</div>
-    ${v2 ? `<div class="stats">
-      <div class="stat"><b>${v2.win.toFixed(1)}%</b><span>v2 · 10일 승률</span></div>
-      <div class="stat"><b>${sg(v2v.net)}</b><span>거래량 동반 · 10일 평균</span></div>
-      <div class="stat"><b>${sg(base.net)}</b><span>전체 종목 · 기준선</span></div></div>
-      <p class="small muted" style="margin:12px 0 0">최근 2년 백테스트(비용 후)에서는 v2도 아무 종목이나 사는 것보다 나은 결과가 아니었어요. 매수 신호가 아니라 <b style="color:var(--text)">눈여겨볼 후보</b>로만 보세요.</p>` : ""}`;
-  renderStockList();
-}
-function renderStockList(){
-  const top = WATCH.filter(w => w.prio >= 4), mid = WATCH.filter(w => w.prio === 3);
-  const list = showAll ? top.concat(mid) : top;
-  $("stockCount").textContent = `상위 ${list.length}`;
-  $("stocks").innerHTML = list.length ? list.map(w => `
-    <a class="st" href="https://m.stock.naver.com/domestic/stock/${w.code}/total" target="_blank" rel="noopener">
-      <div class="top1">
-        <div style="min-width:0"><div class="nm">${esc(w.name)}</div><div class="sub">${w.market} · ${esc(w.marketValue)}</div></div>
-        <div class="px"><b>${won(w.close)}</b><span class="${w.change > 0 ? "up" : w.change < 0 ? "down" : ""} small">${w.change > 0 ? "▲" : w.change < 0 ? "▼" : ""} ${Math.abs(w.change).toFixed(2)}%</span>
-          <div class="prio">${[0,1,2,3,4,5].map(i => `<i class="${i < w.prio ? "on" : ""}"></i>`).join("")}</div></div>
-      </div>
-      <div class="tags">${w.turnKinds.map(k => `<span class="tag g">${esc(k)}</span>`).join("")}
-        ${w.volSurge ? '<span class="tag g">거래량 ↑</span>' : ""}${w.aboveMa200 ? '<span class="tag">200일선 위</span>' : ""}</div>
-      <div class="kv">
-        <div>RSI 최저→현재<b>${w.rsiMin} → ${w.rsi}</b></div>
-        <div>저점 대비<b class="up">+${w.bounce}%</b></div>
-        <div>전환일<b>${ymd8(w.turnDate)}</b></div>
-      </div>
-    </a>`).join("") : '<div class="empty">오늘은 조건을 만족한 종목이 없어요</div>';
-  const mb = $("moreBtn");
-  mb.hidden = !mid.length;
-  mb.textContent = showAll ? "상위만 보기" : `우선순위 3점 ${mid.length}종목 더 보기`;
-  mb.onclick = () => { showAll = !showAll; renderStockList(); };
-}
-
 /* ---------- 시작 ---------- */
 renderFit(); tick(); setInterval(tick, 15000);
-showTab(localStorage.getItem("dash.tab") || "fit");
+showTab($("tab-" + localStorage.getItem("dash.tab")) ? localStorage.getItem("dash.tab") : "fit");
 </script>
 </body>
 </html>
